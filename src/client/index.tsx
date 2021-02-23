@@ -12,7 +12,7 @@ const Main: React.FC = () => {
   return (
     <>
       <header>
-        <h1>デバッガー</h1>
+        <h1>デバッグアダプタモニター</h1>
       </header>
 
       <main>
@@ -24,7 +24,7 @@ const Main: React.FC = () => {
       </main>
 
       <footer>
-        <a href="https://github.com/vain0x/debugger-web">See source code on GitHub.</a>
+        <a href="https://github.com/vain0x/debug-adapter-monitor">See source code on GitHub.</a>
       </footer>
     </>
   )
