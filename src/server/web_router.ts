@@ -9,8 +9,7 @@ export const newRouter = (signal: AbortSignal): express.Router => {
   let adapterError: unknown = null
   let exitCode: number | null = null
 
-  let stderrChunk = Buffer.from([])
-  let stderrChunkOffset = 0
+  let stderrBuffer = Buffer.from([])
 
   const terminate = () => {
     console.error("trace: terminate:", adapterProcess?.pid)
@@ -22,6 +21,7 @@ export const newRouter = (signal: AbortSignal): express.Router => {
         setTimeout(() => {
           console.error("trace: killing", adapterProcess?.pid)
           adapterProcess?.kill("SIGKILL")
+          adapterProcess = null
         }, 3 * 1000)
       }
     }
@@ -54,41 +54,41 @@ export const newRouter = (signal: AbortSignal): express.Router => {
 
     adapter.once("exit", code => {
       console.error("trace: adapter: exit", code)
-      adapterProcess = null
       exitCode = code
     })
 
     adapter.once("error", err => {
       console.error("error: adapter: error", err)
 
-      adapterProcess = null
       exitCode = -1
       adapterError = err
     })
 
-    adapter.stdout.on("readable", () => {
-      while (adapter.stdout.readable) {
-        const chunk = adapter.stderr.read() as Buffer | null
-        if (chunk == null || chunk.length === 0) {
-          break
+    // adapter.stdout.on("readable", () => {})
+
+    adapter.stderr.once("readable", () => {
+      while (adapter.stderr.readable) {
+        const chunk = adapterProcess?.stderr?.read() as Buffer | null
+        console.log("chunk", chunk != null, chunk?.length)
+        if (chunk == null || chunk.length) {
+          return
         }
 
-        stderrChunk = Buffer.concat([stderrChunk, chunk])
-      }
-    })
-
-    adapter.stderr.on("readable", () => {
-      while (adapter.stderr.readable ?? false) {
-        const chunk = adapter.stderr.read() as Buffer | null
-        if (chunk == null || chunk.length === 0) {
-          break
-        }
-
-        stderrChunk = Buffer.concat([stderrChunk, chunk])
+        stderrBuffer = Buffer.concat([stderrBuffer, chunk])
       }
     })
 
     res.json({}).end()
+
+    {
+      const message = JSON.stringify({
+        "adapterID": "adapter",
+      })
+      const data = new TextEncoder().encode(message)
+      const len = data.length
+      adapter.stdin.write(`Content-Length: ${len}\r\n\r\n`)
+      adapter.stdin.write(data)
+    }
   })
 
   router.post("/rpc/terminate", (_req, res) => {
@@ -96,33 +96,60 @@ export const newRouter = (signal: AbortSignal): express.Router => {
     res.json({}).end()
   })
 
-  router.get("/rpc/status", (req, res) => {
-    const stderrOffset = req.body?.["stderrOffset"] as number | null ?? 0
-    if (!(typeof stderrOffset === "number" && Number.isSafeInteger(stderrOffset) && stderrOffset >= 1)) {
-      res.status(400).send("Bad request. stderrOffset").end()
+  // long-polling
+  router.post("/rpc/status", (req, res) => {
+    if (adapterProcess == null) {
+      // 起動するのを待つ？
+      setTimeout(() => {
+        res.json({
+          live: false,
+          exitCode: null,
+          stderr: "",
+          err: null,
+        }).end()
+      }, 1000)
       return
     }
 
-    let stderr = stderrChunk
-    stderrChunk = Buffer.from([])
-    stderrChunkOffset += stderr.length
+    const adapterStderr = adapterProcess.stderr
+    const attach = (): void => {
+      adapterStderr?.once("readable", onReadable)
+      adapterStderr?.once("close", onClose)
+    }
+    const detach = (): void => {
+      adapterStderr?.removeListener("readable", onReadable)
+      adapterStderr?.removeListener("close", onClose)
+    }
 
-    if (adapterProcess == null) {
-      res.send({
-        live: false,
-        exitCode,
-        stderr,
-        stderrChunkOffset,
-        err: adapterError,
-      }).end()
-    } else {
-      res.send({
-        live: true,
-        command: adapterCommand,
-        stderr,
-        stderrChunkOffset,
+    const onReadable = () => {
+      detach()
+      console.log("on readable?", adapterProcess?.stderr?.readable ?? false)
+      if (adapterProcess?.stderr?.readable ?? false) {
+        const chunk = adapterProcess?.stderr?.read() as Buffer | null
+        console.log("read:", chunk)
+
+        res.json({
+          live: adapterProcess != null,
+          stderr: chunk?.toString() ?? "",
+        })
+      }
+    }
+
+    const onClose = () => {
+      detach()
+      res.json({
+        live: adapterProcess != null,
+        stderr: "",
       }).end()
     }
+
+    console.log("readable?", adapterProcess?.stderr?.readable ?? false)
+    if (adapterProcess?.stderr?.readable ?? false) {
+      onReadable()
+      return
+    }
+
+    attach()
   })
 
   return router
