@@ -1,0 +1,37 @@
+{
+  "name": "debug-adapter-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Client of debug adapter protocol (DAP) for debugging the adapter.",
+  "author": "vain0x <vainzerox@gmail.com>",
+  "license": "CC0-1.0",
+  "main": "target/server/main.js",
+  "scripts": {
+    "server-start": "node target/server/main.js",
+    "server-watch": "node src/server/main_dev.js",
+    "tsc-build": "tsc --build",
+    "tsc-watch": "tsc --watch --preserveWatchOutput",
+    "webpack-build": "webpack --mode production",
+    "webpack-watch": "webpack --mode development --devtool eval --watch",
+    "dev": "run-p server-watch tsc-watch webpack-watch",
+    "start": "run-s tsc-build webpack-build server-start"
+  },
+  "devDependencies": {
+    "@types/node": "^14.14.31",
+    "chokidar": "^3.5.1",
+    "npm-run-all": "^4.1.5",
+    "source-map-loader": "^2.0.1",
+    "ts-loader": "^8.0.17",
+    "typescript": "^4.1.5",
+    "webpack": "^5.24.0",
+    "webpack-cli": "^4.5.0"
+  },
+  "dependencies": {
+    "@types/express": "^4.17.11",
+    "@types/react": "^17.0.2",
+    "@types/react-dom": "^17.0.1",
+    "express": "^4.17.1",
+    "react": "^17.0.1",
+    "react-dom": "^17.0.1"
+  }
+}
