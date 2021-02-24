@@ -1,35 +1,95 @@
 import express from "express"
 import cp, { ChildProcess } from "child_process"
 
-export const newRouter = (signal: AbortSignal): express.Router => {
-  const router = express.Router()
+type Phase =
+  { kind: "prelaunch" }
+  | { kind: "launched" }
 
-  let adapterProcess: ChildProcess | null = null
-  let adapterCommand: string | null = null
-  let adapterError: unknown = null
-  let exitCode: number | null = null
+class DapClient {
+  adapter: ChildProcess | null = null
+  command: string | null = null
+  exitCode: number | null = null
+  err: unknown
+  last = 0
 
-  let stderrBuffer = Buffer.from([])
+  launch(command: string): void {
+    console.log("trace: spawn", command)
 
-  const terminate = () => {
-    console.error("trace: terminate:", adapterProcess?.pid)
+    const adapter = cp.spawn(command, { shell: true, stdio: ["pipe", "pipe", "pipe"] })
+    this.adapter = adapter
+    this.command = command
+    console.log("trace: spawned, pid =", adapter.pid)
 
-    if (adapterProcess != null) {
-      adapterProcess.kill()
+    adapter.once("exit", code => {
+      console.error("trace: adapter: exit", code)
+      this.exitCode = code
+    })
 
-      if (!adapterProcess.killed) {
+    adapter.once("error", err => {
+      console.error("error: adapter: error", err)
+
+      this.err = err
+      this.exitCode = -1
+    })
+
+    adapter.stdout.on("readable", () => {
+      while (adapter.stdout.readable) {
+        const chunk = adapter.stdout.read() as Buffer | null
+        if (chunk == null || chunk.length === 0) {
+          break
+        }
+
+        this.put(chunk)
+      }
+    })
+  }
+
+  put(chunk: Buffer): void {
+
+  }
+
+  sendInitialize(): void {
+    // adapter.stdout.on("readable", () => {})
+
+    const message = JSON.stringify({
+      seq: ++this.last,
+      type: "request",
+      command: "initialize",
+      arguments: {
+        "adapterID": "adapter",
+      },
+    })
+    const data = new TextEncoder().encode(message)
+    const len = data.length
+    this.adapter?.stdin?.write(`Content-Length: ${len}\r\n\r\n`)
+    this.adapter?.stdin?.write(data)
+  }
+
+  terminate() {
+    console.error("trace: terminate:", this.adapter?.pid)
+
+    if (this.adapter != null) {
+      this.adapter.kill()
+
+      if (!this.adapter.killed) {
         setTimeout(() => {
-          console.error("trace: killing", adapterProcess?.pid)
-          adapterProcess?.kill("SIGKILL")
-          adapterProcess = null
+          console.error("trace: killing", this.adapter?.pid)
+          this.adapter?.kill("SIGKILL")
+          this.adapter = null
         }, 3 * 1000)
       }
     }
   }
+}
+
+export const newRouter = (signal: AbortSignal): express.Router => {
+  const router = express.Router()
+
+  const client: DapClient = new DapClient()
 
   signal.addEventListener("abort", () => {
     console.error("trace: router is aborting.")
-    terminate()
+    client.terminate()
   }, { once: true })
 
   router.post("/rpc/launch", (req, res) => {
@@ -46,49 +106,6 @@ export const newRouter = (signal: AbortSignal): express.Router => {
       return
     }
 
-    console.log("trace: spawn", command)
-    const adapter = cp.spawn(command, { shell: true, stdio: ["pipe", "pipe", "pipe"] })
-    adapterCommand = command
-    adapterProcess = adapter
-    console.log("trace: spawned, pid =", adapter.pid)
-
-    adapter.once("exit", code => {
-      console.error("trace: adapter: exit", code)
-      exitCode = code
-    })
-
-    adapter.once("error", err => {
-      console.error("error: adapter: error", err)
-
-      exitCode = -1
-      adapterError = err
-    })
-
-    // adapter.stdout.on("readable", () => {})
-
-    adapter.stderr.once("readable", () => {
-      while (adapter.stderr.readable) {
-        const chunk = adapterProcess?.stderr?.read() as Buffer | null
-        console.log("chunk", chunk != null, chunk?.length)
-        if (chunk == null || chunk.length) {
-          return
-        }
-
-        stderrBuffer = Buffer.concat([stderrBuffer, chunk])
-      }
-    })
-
-    res.json({}).end()
-
-    {
-      const message = JSON.stringify({
-        "adapterID": "adapter",
-      })
-      const data = new TextEncoder().encode(message)
-      const len = data.length
-      adapter.stdin.write(`Content-Length: ${len}\r\n\r\n`)
-      adapter.stdin.write(data)
-    }
   })
 
   router.post("/rpc/terminate", (_req, res) => {
